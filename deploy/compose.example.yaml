@@ -1,0 +1,20 @@
+services:
+  coupleogames:
+    image: ${COUPLEOGAMES_IMAGE:?Set an approved immutable image}
+    restart: unless-stopped
+    user: ${COUPLEOGAMES_UID:?Set a non-root user ID}:${COUPLEOGAMES_GID:?Set a group ID}
+    env_file:
+      - ${COUPLEOGAMES_ENV_FILE:?Set a private environment file}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: ${COUPLEOGAMES_CONTAINER_PORT:?Set the app port}
+      DATABASE_PATH: /app/data/coupleogames.sqlite
+    ports:
+      - "127.0.0.1:${COUPLEOGAMES_BIND_PORT:?Set a loopback port}:${COUPLEOGAMES_CONTAINER_PORT:?Set the app port}"
+    volumes:
+      - ${COUPLEOGAMES_DATA_DIR:?Set a local data directory}:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
