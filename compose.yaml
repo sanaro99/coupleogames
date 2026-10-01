@@ -1,0 +1,20 @@
+services:
+  coupleogames:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      DATABASE_PATH: /app/data/coupleogames.sqlite
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - game-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  game-data:
