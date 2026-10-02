@@ -1,5 +1,6 @@
 services:
   coupleogames:
+    image: ghcr.io/sanaro99/coupleogames:latest
     build: .
     restart: unless-stopped
     env_file: .env
@@ -12,6 +13,8 @@ services:
       - "127.0.0.1:3001:3001"
     volumes:
       - game-data:/app/data
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     security_opt:
       - no-new-privileges:true
     cap_drop:
