@@ -1,23 +1,21 @@
 services:
   coupleogames:
     image: ghcr.io/sanaro99/coupleogames:latest
-    build: .
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - /mnt/apps-pool/appconfig/coupleogames.env
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
-      PORT: 3001
+      PORT: "3001"
       DATABASE_PATH: /app/data/coupleogames.sqlite
     ports:
       - "127.0.0.1:3001:3001"
     volumes:
-      - game-data:/app/data
+      - /mnt/apps-pool/coupleogames/data:/app/data
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-volumes:
-  game-data:
