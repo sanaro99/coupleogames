@@ -1,5 +1,22 @@
 import { test, expect, type Page } from '@playwright/test';
 const keys = ['e2e-first-private-key-123456789', 'e2e-second-private-key-123456789'];
+const waitForCat = (page: Page) => expect(page.locator('.cat-companion')).toHaveAttribute('data-moving', 'false', { timeout: 20000 });
+test('cat stands up before moving to another card', async ({ page }) => {
+  await enter(page, 0);
+  const cat = page.locator('.cat-companion');
+  await expect(page.locator('.cat-world canvas')).toBeVisible();
+  await expect(cat).toHaveAttribute('data-current-depth', /^-?\d+$/);
+  await waitForCat(page);
+  const before = await cat.boundingBox();
+  await page.getByRole('button', { name: 'How to play Clue Quest' }).focus();
+  await expect(cat).toHaveAttribute('data-anchor', 'clue');
+  await page.waitForTimeout(400);
+  const rising = await cat.boundingBox();
+  expect(Math.hypot(rising!.x - before!.x, rising!.y - before!.y)).toBeLessThan(1);
+  await waitForCat(page);
+  const arrived = await cat.boundingBox();
+  expect(Math.hypot(arrived!.x - before!.x, arrived!.y - before!.y)).toBeGreaterThan(10);
+});
 test('cat moves between interface elements without blocking controls', async ({ page }) => {
   await enter(page, 0);
   await expect(page.locator('.cat-world')).toBeVisible();
@@ -21,7 +38,7 @@ test('cat moves between interface elements without blocking controls', async ({ 
 test('a lost WebGL context restores a visible cat help control', async ({ page }) => {
   await enter(page, 0); await expect(page.locator('.cat-world canvas')).toBeVisible();
   await expect(page.locator('.cat-companion')).toHaveAttribute('data-current-depth', /^-?\d+$/);
-  await expect(page.locator('.cat-companion')).toHaveAttribute('data-moving', 'false');
+  await waitForCat(page);
   const lost = await page.locator('.cat-world canvas').evaluate((canvas: HTMLCanvasElement) => {
     const gl = canvas.getContext('webgl2'); const extension = gl?.getExtension('WEBGL_lose_context');
     if (!extension) return false; extension.loseContext(); return true;
@@ -45,11 +62,12 @@ async function start(a: Page, b: Page, name: string) {
   await expect(a.getByRole('heading', { name, exact: true, level: 1 })).toBeVisible();
 }
 test('a private two-phone table completes all four games and keeps the scorecard', async ({ browser }) => {
+  test.setTimeout(150000);
   const ca = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const cb = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const a = await ca.newPage(); let b = await cb.newPage(); await enter(a, 0); await enter(b, 1);
   await start(a, b, 'In Sync');
-  await expect(a.locator('.cat-companion')).toHaveAttribute('data-moving', 'false');
+  await waitForCat(a);
   await a.getByRole('button', { name: 'Ask the cat for help' }).click();
   await expect(a.getByRole('dialog').getByRole('heading', { name: 'In Sync', exact: true })).toBeVisible();
   await a.getByRole('button', { name: 'Close dialog' }).click();
@@ -60,7 +78,7 @@ test('a private two-phone table completes all four games and keeps the scorecard
     await b.getByLabel('Your answer').fill('MOON'); await b.getByRole('button', { name: 'Submit answer' }).click();
     await expect(a.getByText('Same answer')).toBeVisible();
     if (i === 0) {
-      await expect(a.locator('.cat-companion')).toHaveAttribute('data-moving', 'false');
+      await waitForCat(a);
       await a.screenshot({ path: 'test-results/answer.png', fullPage: true });
     }
     await a.getByRole('button', { name: i === 5 ? 'See result' : 'Next round' }).click();
@@ -115,14 +133,14 @@ test('a private two-phone table completes all four games and keeps the scorecard
   await a.getByRole('button', { name: 'Scorecard' }).click(); await expect(a.locator('.history-row')).toHaveCount(4);
   await a.getByRole('button', { name: 'Close dialog' }).click();
   expect(await a.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await expect(a.locator('.cat-companion')).toHaveAttribute('data-moving', 'false');
+  await waitForCat(a);
   await a.setViewportSize({ width: 1440, height: 900 });
   await expect(a.locator('.cat-overlay')).toHaveCSS('width', '1440px');
-  await expect(a.locator('.cat-companion')).toHaveAttribute('data-moving', 'false');
+  await waitForCat(a);
   await a.screenshot({ path: 'test-results/laptop.png', fullPage: true });
   await a.setViewportSize({ width: 390, height: 844 });
   await expect(a.locator('.cat-overlay')).toHaveCSS('width', '390px');
-  await expect(a.locator('.cat-companion')).toHaveAttribute('data-moving', 'false');
+  await waitForCat(a);
   await expect(a.locator('.cat-companion')).toBeVisible();
   await a.screenshot({ path: 'test-results/phone-viewport.png' });
   await a.screenshot({ path: 'test-results/phone.png', fullPage: true });

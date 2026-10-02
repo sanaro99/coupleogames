@@ -5,6 +5,13 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this verified main commit after release approval
+        type: boolean
+        default: false
+        required: true
 
 permissions:
   contents: read
@@ -41,9 +48,11 @@ jobs:
 
   publish:
     name: Publish image to GHCR
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish && vars.COUPLEOGAMES_RELEASE_ENABLED == 'true' && needs.verify.result == 'success'
     needs: verify
+    environment: coupleogames-release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -61,8 +70,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
           tags: |
-            type=raw,value=latest
             type=sha,format=long,prefix=sha-
       - name: Build and publish image
         uses: docker/build-push-action@v6

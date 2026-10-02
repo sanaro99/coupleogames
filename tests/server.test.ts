@@ -7,11 +7,13 @@ import { createApp, type AppConfig } from '../server/app.js';
 import { Store } from '../server/store.js';
 import { createMatch } from '../server/engine.js';
 import type { RoomState } from '../shared/types.js';
+import { provisionRooms } from './support/rooms.js';
 const temporary: string[] = []; const closers: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of closers.splice(0)) await close(); for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true }); });
-function config(): AppConfig {
+async function config(): Promise<AppConfig & { keys: string[]; roomId: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'coupleogames-')); temporary.push(dir);
-  return { databasePath: join(dir, 'test.sqlite'), names: ['First', 'Second'], keys: ['test-key-for-first-partner-123456789', 'test-key-for-second-partner-123456789'], origin: 'http://localhost:5173', production: false };
+  const databasePath=join(dir,'test.sqlite'); const store=new Store(databasePath); const seeded=await provisionRooms(store); await store.close();
+  return { databasePath, keys: seeded.keys.slice(0,2), roomId:seeded.ids[0], origin:'http://localhost:5173',production:false };
 }
 const wait = <T>(socket: Socket, event: string, accepts: (value: T) => boolean = () => true) => new Promise<T>((resolve, reject) => {
   const receive = (value: T) => { if (accepts(value)) { clearTimeout(t); socket.off(event, receive); resolve(value); } };
@@ -20,42 +22,43 @@ const wait = <T>(socket: Socket, event: string, accepts: (value: T) => boolean =
 });
 describe('private two-seat HTTP boundary', () => {
   it('protects names and records, maps keys to fixed seats, and rejects forged origins', async () => {
-    const c = config(); const app = await createApp(c); closers.push(app.close);
+    const c = await config(); const app = await createApp(c); closers.push(app.close);
     expect((await app.http.inject('/api/session')).statusCode).toBe(401);
-    expect((await app.http.inject({ method: 'POST', url: '/api/login', payload: { key: 'bad' } })).statusCode).toBe(401);
-    const login = await app.http.inject({ method: 'POST', url: '/api/login', payload: { key: c.keys[0], seat: 1 } });
+    expect((await app.http.inject({ method: 'POST', url: '/api/login', headers:{origin:c.origin}, payload: { key: 'bad' } })).statusCode).toBe(401);
+    expect((await app.http.inject({method:'POST',url:'/api/login',headers:{origin:c.origin},payload:{key:c.keys[0],seat:1}})).statusCode).toBe(400);
+    const login = await app.http.inject({ method: 'POST', url: '/api/login', headers:{origin:c.origin}, payload: { key: c.keys[0] } });
     expect(login.json().seat).toBe(0); const cookie = login.headers['set-cookie'] as string;
     const names = await app.http.inject({ method: 'POST', url: '/api/setup', headers: { cookie, origin: 'https://unrelated.example' }, payload: { names: ['Other', 'People'] } });
     expect(names.statusCode).toBe(403);
-    const setup = await app.http.inject({ method: 'POST', url: '/api/setup', headers: { cookie }, payload: { names: ['Ada', 'Bea'] } });
+    const setup = await app.http.inject({ method: 'POST', url: '/api/setup', headers: { cookie,origin:c.origin }, payload: { names: ['Ada', 'Bea'] } });
     expect(setup.statusCode).toBe(200);
     expect((await app.http.inject({ url: '/api/session', headers: { cookie } })).json().names).toEqual(['Ada', 'Bea']);
     expect(cookie).toContain('HttpOnly'); expect(cookie).toContain('SameSite=Strict');
     const invitation = await app.http.inject({ url: '/api/invite', headers: { cookie } });
     expect(invitation.body).not.toContain(c.keys[1]); expect(invitation.json().url).toBe('http://localhost:5173/');
-    await app.http.inject({ method: 'POST', url: '/api/logout', headers: { cookie } });
+    await app.http.inject({ method: 'POST', url: '/api/logout', headers: { cookie,origin:c.origin },payload:{} });
     expect((await app.http.inject({ url: '/api/session', headers: { cookie } })).statusCode).toBe(401);
   });
   it('restores names and paused active play after restart and saves a result once', async () => {
-    const c = config(); const first = new Store(c.databasePath); first.setNames(['Ada', 'Bea']);
+    const c = await config(); const first = new Store(c.databasePath);
     const m = createMatch('doodle', 1000); m.scores = [4, 4]; m.outcome = { winner: 'together', success: true, score: 4 }; m.phase = 'finished';
     const snapshot = { match: m, proposal: null, leaveVotes: [false, false] as [boolean, boolean] };
-    first.save(snapshot, 2000); first.save(snapshot, 2001); expect(first.records()).toHaveLength(1);
-    const active = createMatch('doodle', 3000); first.save({ ...snapshot, match: active }, 3000); first.close();
-    const second = new Store(c.databasePath); expect(second.getNames()).toEqual(['Ada', 'Bea']); expect(second.load()?.match?.id).toBe(active.id); second.close();
+    await first.saveRoom(c.roomId,0,{names:['Ada','Bea'],setup:true,snapshot},2000); await first.saveRoom(c.roomId,1,{names:['Ada','Bea'],setup:true,snapshot},2001); expect(await first.getRecords(c.roomId)).toHaveLength(1);
+    const active = createMatch('doodle', 3000); await first.saveRoom(c.roomId,2,{names:['Ada','Bea'],setup:true,snapshot:{...snapshot,match:active}},3000); await first.close();
+    const second = new Store(c.databasePath); expect((await second.getRoom(c.roomId))?.names).toEqual(['Ada', 'Bea']); expect((await second.getRoom(c.roomId))?.snapshot.match?.id).toBe(active.id); await second.close();
     const restarted = await createApp(c); closers.push(restarted.close);
-    const login = await restarted.http.inject({ method: 'POST', url: '/api/login', payload: { key: c.keys[0] } });
+    const login = await restarted.http.inject({ method: 'POST', url: '/api/login', headers:{origin:c.origin}, payload: { key: c.keys[0] } });
     expect(login.json().match.id).toBe(active.id); expect(login.json().match.paused).toBe(true); expect(login.json().match.deadline).toBeNull(); expect(login.json().match.remainingMs).toBe(60000);
   });
   it('authenticates sockets and keeps partner answers private through reconnect', async () => {
-    const c = config(); const app = await createApp(c); closers.push(app.close);
+    const c = await config(); const app = await createApp(c); closers.push(app.close);
     await app.http.listen({ host: '127.0.0.1', port: 0 }); const address = app.http.server.address();
     const url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
     const anonymous = io(url, { transports: ['websocket'], extraHeaders: { origin: c.origin }, reconnection: false });
     expect((await wait<Error>(anonymous, 'connect_error')).message).toContain('private'); anonymous.disconnect();
     const sockets: Socket[] = []; const cookies: string[] = [];
     for (const key of c.keys) {
-      const r = await app.http.inject({ method: 'POST', url: '/api/login', payload: { key } });
+      const r = await app.http.inject({ method: 'POST', url: '/api/login', headers:{origin:c.origin}, payload: { key } });
       cookies.push(r.headers['set-cookie'] as string);
       const s = io(url, { transports: ['websocket'], extraHeaders: { cookie: r.headers['set-cookie'] as string, origin: c.origin }, reconnection: false });
       await wait<RoomState>(s, 'state'); sockets.push(s);
@@ -77,14 +80,14 @@ describe('private two-seat HTTP boundary', () => {
     const reconnect = wait<RoomState>(sockets[0], 'state', s => s.match?.paused === true); sockets[1].disconnect(); expect((await reconnect).match?.paused).toBe(true);
   });
   it('disconnects expired sessions before sending new private state', async () => {
-    const c = config(); const app = await createApp(c); closers.push(app.close); await app.http.listen({ host: '127.0.0.1', port: 0 });
+    const c = await config(); const app = await createApp(c); closers.push(app.close); await app.http.listen({ host: '127.0.0.1', port: 0 });
     const address = app.http.server.address(); const url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
-    const first = await app.http.inject({ method: 'POST', url: '/api/login', payload: { key: c.keys[0] } });
+    const first = await app.http.inject({ method: 'POST', url: '/api/login', headers:{origin:c.origin}, payload: { key: c.keys[0] } });
     const s = io(url, { transports: ['websocket'], extraHeaders: { cookie: first.headers['set-cookie'] as string, origin: c.origin }, reconnection: false });
     closers.unshift(async () => { s.disconnect(); }); await wait(s, 'state');
     const future = Date.now() + 31 * 86400000; vi.spyOn(Date, 'now').mockReturnValue(future);
     const disconnected = wait<string>(s, 'disconnect');
-    const second = await app.http.inject({ method: 'POST', url: '/api/login', payload: { key: c.keys[1] } });
+    const second = await app.http.inject({ method: 'POST', url: '/api/login', headers:{origin:c.origin}, payload: { key: c.keys[1] } });
     const fresh = io(url, { transports: ['websocket'], extraHeaders: { cookie: second.headers['set-cookie'] as string, origin: c.origin }, reconnection: false });
     closers.unshift(async () => { fresh.disconnect(); });
     expect(await disconnected).toBe('io server disconnect'); expect(s.connected).toBe(false);
