@@ -1,96 +1,200 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { memo, useEffect, useMemo, useRef } from 'react';
-import { CatmullRomCurve3, Group, Vector3 } from 'three';
+import { Group } from 'three';
 import type { CatMood } from '../../shared/types';
 import type { CatPlacement } from './catLayout';
+import { planCatJourney, sampleCatJourney, samplePawStep, type CatPose } from './catMotion';
+import { createKittenModel } from './kittenModel';
+
+const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+const FOOT_PHASES = [.25, .75, 0, .5];
+type Triple = [number, number, number];
 
 function Cat({ placement, mood, visible, onPose, onSettled, onFailure }: {
   placement: CatPlacement; mood: CatMood; visible: boolean;
-  onPose: (x: number, y: number, scale: number, z: number) => void; onSettled: () => void; onFailure: () => void;
+  onPose: (x: number, y: number, scale: number, z: number) => void;
+  onSettled: () => void; onFailure: () => void;
 }) {
-  const root = useRef<Group>(null!); const head = useRef<Group>(null!);
-  const tail = useRef<Group>(null!); const ears = useRef<Group>(null!);
-  const eyes = useRef<Group>(null!); const legs = useRef<Group[]>([]);
-  const current = useRef({ x: placement.x, y: placement.y, z: -100 });
-  const from = useRef({ ...current.current });
-  const started = useRef(0); const ended = useRef(false); const lastPose = useRef(0);
+  const model = useMemo(createKittenModel, []);
+  const { geometry, material } = model;
+  useEffect(() => () => model.dispose(), [model]);
+  const ball = (position: Triple, scale: Triple, surface: keyof typeof material = 'coat') =>
+    <mesh position={position} scale={scale} geometry={geometry.sphere} material={material[surface]} />;
+  const root = useRef<Group>(null!);
+  const torso = useRef<Group>(null!);
+  const shoulders = useRef<Group>(null!);
+  const haunches = useRef<Group>(null!);
+  const neck = useRef<Group>(null!);
+  const head = useRef<Group>(null!);
+  const ears = useRef<Group>(null!);
+  const eyes = useRef<Group>(null!);
+  const closedEyes = useRef<Group>(null!);
+  const tail = useRef<Group>(null!);
+  const hips = useRef<Group[]>([]);
+  const knees = useRef<Group[]>([]);
+  const paws = useRef<Group[]>([]);
+  const shadow = useRef<Group>(null!);
+  const current = useRef<CatPose>({ x: placement.x, y: placement.y, z: placement.z,
+    stand: 0, yaw: -.18, gait: 0, speed: 0, vx: 0, vy: 0, phase: 'idle', done: true });
+  const journey = useRef(planCatJourney(current.current, placement));
+  const started = useRef(0);
+  const ended = useRef(false);
+  const lastPose = useRef(0);
   const { invalidate, size, gl } = useThree();
+
   useEffect(() => {
     const lost = (event: Event) => { event.preventDefault(); onFailure(); };
     gl.domElement.addEventListener('webglcontextlost', lost);
     return () => gl.domElement.removeEventListener('webglcontextlost', lost);
   }, [gl, onFailure]);
   useEffect(() => {
-    from.current = { ...current.current }; started.current = performance.now(); ended.current = false; invalidate();
+    journey.current = planCatJourney(current.current, placement);
+    started.current = performance.now();
+    ended.current = false;
+    invalidate();
   }, [placement, mood, visible, invalidate]);
+
   useFrame(() => {
     if (!visible) return;
-    const seconds = (performance.now() - started.current) / 1000;
-    const p = Math.min(seconds / 1.65, 1); const ease = p * p * (3 - 2 * p);
-    const dx = placement.x - from.current.x; const dy = placement.y - from.current.y;
-    const traveling = Math.hypot(dx, dy) > 10;
-    const hop = traveling && Math.abs(dy) > 36 ? Math.sin(p * Math.PI) * Math.min(65, Math.abs(dy) * .3 + 20) : 0;
-    const x = from.current.x + dx * ease; const y = from.current.y + dy * ease - hop;
-    const z = from.current.z + (placement.z - from.current.z) * ease + (traveling ? Math.sin(p * Math.PI) * 85 : 0);
-    current.current = { x, y, z };
+    const now = performance.now();
+    const seconds = (now - started.current) / 1000;
+    const pose = sampleCatJourney(journey.current, seconds);
+    current.current = pose;
+    const { stand, gait, speed } = pose;
     const unit = 828.427 / size.height;
-    const perspective = 1 - z / 1000;
-    root.current.position.set((x - size.width / 2) * unit * perspective, (size.height / 2 - y) * unit * perspective, z);
-    root.current.scale.setScalar(49 * unit);
-    const stride = p < 1 && traveling ? Math.sin(seconds * 15) * .42 : 0;
+    const perspective = 1 - pose.z / 1000;
+    const walking = Math.min(1, speed / 90);
+    const bob = Math.cos(gait * 2) * .012 * walking;
+    const sway = Math.sin(gait) * .018 * walking;
     const activity = Math.max(0, 1 - seconds / 2.4);
-    root.current.rotation.y = traveling && p < 1 ? Math.sign(dx || 1) * 1.05 * Math.sin(p * Math.PI) - .18 : -.18;
-    root.current.rotation.z = hop ? -.09 * Math.sin(p * Math.PI * 2) : mood === 'celebrate' ? Math.sin(seconds * 9) * activity * .06 : 0;
-    head.current.rotation.z = mood === 'think' ? .12 : mood === 'sleep' ? -.12 : Math.sin(seconds * 4) * activity * .035;
-    head.current.rotation.y = p < 1 && traveling ? Math.sign(dx) * .12 : 0;
-    ears.current.rotation.z = Math.sin(seconds * 7) * activity * .03;
-    tail.current.rotation.z = Math.sin(seconds * 4.5) * activity * .15;
-    legs.current.forEach((leg, i) => {
-      leg.rotation.x = stride * (i % 2 ? -1 : 1);
-      leg.rotation.z = !traveling && i === 0 && mood === 'explain' ? -.55 * activity : 0;
+
+    root.current.position.set((pose.x - size.width / 2) * unit * perspective,
+      (size.height / 2 - pose.y) * unit * perspective, pose.z);
+    root.current.scale.setScalar(48 * unit);
+    root.current.rotation.set(0, pose.yaw, 0);
+
+    // The spine tips forward as the hips rise. The head stays above the shoulders.
+    torso.current.position.set(sway * .25, mix(.43, .65, stand) + bob, mix(-.07, -.03, stand));
+    torso.current.rotation.set(stand * Math.PI / 2, 0, sway);
+    torso.current.scale.set(.29, mix(.38, .46, stand), .255);
+    shoulders.current.position.set(sway, mix(.62, .68, stand) + bob, mix(.10, .27, stand));
+    shoulders.current.scale.set(.245, mix(.27, .24, stand), .25);
+    haunches.current.position.set(-sway * .6, mix(.25, .64, stand) - bob * .5, mix(-.18, -.30, stand));
+    haunches.current.scale.set(mix(.32, .275, stand), .265, .27);
+    neck.current.position.set(sway, mix(.78, .79, stand) + bob, mix(.12, .39, stand));
+    neck.current.rotation.x = stand * .35;
+    head.current.position.set(sway, mix(1.00, .96, stand) + bob, mix(.09, .51, stand));
+    head.current.rotation.x = -.035 + stand * .08 + Math.sin(gait * 2) * .018 * walking;
+    head.current.rotation.y = -sway * 1.5 - pose.yaw * .12 * walking;
+    head.current.rotation.z = mood === 'think' ? .10 : mood === 'sleep' ? -.10 : .035 + Math.sin(seconds * 3) * activity * .02;
+    ears.current.rotation.z = Math.sin(seconds * 6) * activity * .025;
+    const restingEyes = mood === 'sleep' && pose.phase === 'idle' || seconds > 1.8 && seconds < 1.94;
+    eyes.current.visible = !restingEyes;
+    closedEyes.current.visible = restingEyes;
+
+    // Four-beat walk: a paw travels back while planted, then lifts and swings forward.
+    // Two-bone inverse kinematics gives each leg an elbow/knee and a level paw.
+    hips.current.forEach((hip, index) => {
+      const front = index < 2;
+      const side = index % 2 ? 1 : -1;
+      const upperLength = front ? .30 : .32;
+      const lowerLength = .33;
+      const step = samplePawStep(gait, FOOT_PHASES[index], 48 / perspective);
+      const hipY = front ? mix(.57, .59, stand) + bob : mix(.27, .60, stand) - bob * .5;
+      const hipZ = front ? mix(.10, .30, stand) : mix(-.21, -.31, stand);
+      let footY = .065 + step.lift * .16 * walking;
+      let footZ = (front ? .34 : -.34) + step.z * stand;
+      if (index === 0 && mood === 'explain' && pose.phase === 'idle') {
+        footY += .12 * activity;
+        footZ += .07 * activity;
+      }
+      const dy = footY - hipY;
+      const dz = footZ - hipZ;
+      const reach = Math.max(.08, Math.min(upperLength + lowerLength - .002, Math.hypot(dy, dz)));
+      const bend = Math.acos(Math.max(-1, Math.min(1,
+        (upperLength ** 2 + reach ** 2 - lowerLength ** 2) / (2 * upperLength * reach))));
+      const upperAngle = Math.atan2(-dz, -dy) + (front ? bend : -bend);
+      const kneeY = hipY - Math.cos(upperAngle) * upperLength;
+      const kneeZ = hipZ - Math.sin(upperAngle) * upperLength;
+      const lowerAngle = Math.atan2(-(footZ - kneeZ), -(footY - kneeY));
+      hip.position.set(side * (front ? .19 : .22), hipY, hipZ);
+      hip.rotation.x = upperAngle;
+      knees.current[index].rotation.x = lowerAngle - upperAngle;
+      paws.current[index].rotation.x = -lowerAngle;
     });
-    const blinking = mood === 'sleep' || seconds > 1.7 && seconds < 1.86;
-    eyes.current.scale.y = blinking ? .12 : 1;
-    if (mood === 'celebrate' && seconds < 2.4) root.current.position.y += Math.abs(Math.sin(seconds * 8)) * activity * 8 * unit;
-    if (performance.now() - lastPose.current > 40 || p === 1) {
-      onPose(x, y, 1 / perspective, z); lastPose.current = performance.now();
+
+    tail.current.position.set(.17, mix(.27, .64, stand) - bob * .5, mix(-.39, -.47, stand));
+    tail.current.rotation.set(mix(-.15, -.3, stand), sway * .7,
+      mix(-.28, -.18, stand) + Math.sin(seconds * 3 - .6) * (.045 * activity + .06 * walking));
+    shadow.current.rotation.y = -pose.yaw;
+    shadow.current.scale.set(mix(.40, .57 + Math.abs(Math.sin(pose.yaw)) * .13, stand), .065, 1);
+
+    if (now - lastPose.current > 40 || pose.done && !ended.current) {
+      onPose(pose.x, pose.y, 1 / perspective, pose.z);
+      lastPose.current = now;
     }
-    if (seconds < 2.4) invalidate();
-    else if (!ended.current) { ended.current = true; onSettled(); }
+    if (pose.done && !ended.current) { ended.current = true; onSettled(); }
+    if (seconds < Math.max(2.4, journey.current.duration)) invalidate();
   });
-  const ink = '#1e242c';
-  const tailCurve = useMemo(() => new CatmullRomCurve3([new Vector3(0, 0, 0), new Vector3(.3, .17, -.08), new Vector3(.48, .43, 0), new Vector3(.34, .67, .08), new Vector3(.16, .62, .1)]), []);
-  const ball = (position: [number, number, number], scale: [number, number, number], color = ink) => <mesh position={position} scale={scale}><sphereGeometry args={[1, 20, 14]} /><meshStandardMaterial color={color} roughness={.78} /></mesh>;
-  return <group ref={root}>
-    {ball([0, .47, -.01], [.34, .46, .3])}
-    {ball([0, .32, .08], [.29, .31, .26])}
-    {[-1, 1].flatMap(side => [0, 1].map((front, i) => <group key={`${side}-${front}`} ref={el => { if (el) legs.current[(side === -1 ? 0 : 2) + i] = el; }} position={[side * .21, .3, front ? .14 : -.13]}>
-      {ball([0, -.1, 0], [.105, .23, .11])}{ball([0, -.245, .08], [.14, .09, .18])}
-    </group>))}
-    <group ref={head} position={[0, .96, .06]}>
-      {ball([0, 0, 0], [.47, .4, .34])}
-      <group ref={ears}>{[-1, 1].map(side => <group key={side} position={[side * .31, .31, -.015]} rotation={[0, 0, -side * .18]}>
-        <mesh><coneGeometry args={[.18, .39, 3]} /><meshStandardMaterial color={ink} roughness={.8} /></mesh>
-        <mesh position={[0, .012, .09]} scale={[.53, .65, .17]}><coneGeometry args={[.18, .39, 3]} /><meshStandardMaterial color="#b3828d" roughness={.9} /></mesh>
+
+  return <group ref={root} dispose={null}>
+    <group ref={torso}>{ball([0, 0, 0], [1, 1, 1])}</group>
+    <group ref={shoulders}>{ball([0, 0, 0], [1, 1, 1])}</group>
+    <group ref={haunches}>{ball([0, 0, 0], [1, 1, 1])}</group>
+    <group ref={neck}>{ball([0, 0, 0], [.215, .22, .215])}</group>
+    {[0, 1, 2, 3].map(index => {
+      const front = index < 2;
+      const upperLength = front ? .30 : .32;
+      return <group key={index} ref={el => { if (el) hips.current[index] = el; }}>
+        {ball([0, -.07, 0], [front ? .105 : .14, front ? .135 : .18, front ? .115 : .15])}
+        {ball([0, -upperLength / 2, 0], [front ? .083 : .108, upperLength * .60, front ? .09 : .115])}
+        <group position={[0, -upperLength, 0]} ref={el => { if (el) knees.current[index] = el; }}>
+          {ball([0, -.33 / 2, 0], [.076, .33 * .59, .08])}
+          <group position={[0, -.33, 0]} ref={el => { if (el) paws.current[index] = el; }}>
+            {ball([0, 0, .045], [.112, .065, .14])}
+          </group>
+        </group>
+      </group>;
+    })}
+    <group ref={head}>
+      {ball([0, 0, 0], [.415, .355, .34])}
+      {[-1, 1].map(side => <group key={side}>
+        {ball([side * .25, -.125, .12], [.165, .14, .16])}
+      </group>)}
+      <group ref={ears}>{[-1, 1].map(side => <group key={side} position={[side * .265, .235, -.015]} rotation={[.06, side * .10, -side * .25]}>
+        <mesh geometry={geometry.ear} material={material.coat} />
+        <mesh position={[0, .018, .040]} scale={[.68, .73, 1]} geometry={geometry.innerEar} material={material.innerEar} />
       </group>)}</group>
-      <group ref={eyes}>{[-1, 1].map(side => <group key={side} position={[side * .185, .02, .302]}>
-        {ball([0, 0, 0], [.132, .144, .062], '#d6bd75')}
-        <mesh position={[.015, -.004, .058]} scale={[.046, .111, .017]}><sphereGeometry args={[1, 18, 12]} /><meshBasicMaterial color="#10191b" /></mesh>
-        <mesh position={[-.025, .052, .074]}><sphereGeometry args={[.024, 12, 8]} /><meshBasicMaterial color="#fff9dc" /></mesh>
-        <mesh position={[.036, -.043, .071]}><sphereGeometry args={[.011, 10, 6]} /><meshBasicMaterial color="#fff9dc" /></mesh>
+      <group ref={closedEyes} visible={false}>{[-1, 1].map(side => <mesh key={side}
+        position={[side * .173, -.024, .311]} rotation={[0, side * .30, -side * .035]}
+        geometry={geometry.closedEye} material={material.closedEye} />)}</group>
+      <group ref={eyes}>{[-1, 1].map(side => <group key={side} position={[side * .173, -.024, .311]} rotation={[0, side * .30, -side * .035]}>
+        {ball([0, 0, 0], [.131, .143, .050], 'iris')}
+        {ball([.004, -.002, .036], [.110, .122, .025], 'irisInner')}
+        {ball([.008, -.006, .054], [.090, .103, .022], 'pupil')}
+        {ball([-.026, .043, .072], [.020, .024, .007], 'glint')}
+        {ball([.045, -.040, .069], [.007, .009, .004], 'glint')}
       </group>)}</group>
-      {ball([-.07, -.13, .306], [.105, .085, .066], '#2c3038')}
-      {ball([.07, -.13, .306], [.105, .085, .066], '#2c3038')}
-      <mesh position={[0, -.092, .382]} rotation={[0, 0, Math.PI]}><coneGeometry args={[.041, .051, 3]} /><meshStandardMaterial color="#ac8088" /></mesh>
-      {[-1, 1].map(side => <group key={side} position={[side * .21, -.1, .32]}>{[0, 1, 2].map(n => <mesh key={n} position={[side * .12, (n - 1) * .038, 0]} rotation={[0, 0, Math.PI / 2 + side * (n - 1) * .12]}><cylinderGeometry args={[.004, .004, .21, 5]} /><meshBasicMaterial color="#858a91" /></mesh>)}</group>)}
+      {ball([-.055, -.15, .312], [.084, .059, .082], 'muzzle')}
+      {ball([.055, -.15, .312], [.084, .059, .082], 'muzzle')}
+      {ball([0, -.213, .278], [.09, .044, .062])}
+      <mesh position={[0, -.123, .397]} geometry={geometry.nose} material={material.nose} />
+      <mesh geometry={geometry.mouth} material={material.mouth} />
+      <mesh geometry={geometry.whiskers} material={material.whisker} />
     </group>
-    <group ref={tail} position={[.27, .25, -.17]}><mesh><tubeGeometry args={[tailCurve, 20, .063, 8, false]} /><meshStandardMaterial color={ink} roughness={.85} /></mesh></group>
-    <mesh position={[0, -.045, -.025]} rotation={[-Math.PI / 2, 0, 0]} scale={[1, .58, 1]}><circleGeometry args={[.43, 24]} /><meshBasicMaterial color="#30332b" transparent opacity={.1} depthWrite={false} /></mesh>
+    <group ref={tail}>
+      <mesh geometry={geometry.tail} material={material.coat} />
+      {ball([-.035, .71, .035], [.057, .057, .057])}
+    </group>
+    <group ref={shadow} position={[0, -.01, 0]}><mesh geometry={geometry.shadow} material={material.shadow} /></group>
   </group>;
 }
+
 function CatScene(props: { placement: CatPlacement; mood: CatMood; visible: boolean; onPose: (x: number, y: number, scale: number, z: number) => void; onSettled: () => void; onFailure: () => void }) {
   return <Canvas aria-hidden="true" frameloop="demand" dpr={1} camera={{ position: [0, 0, 1000], near: 1, far: 2000, fov: 45 }} gl={{ antialias: true, alpha: true, powerPreference: 'low-power' }}>
-    <ambientLight intensity={1.5} /><directionalLight position={[-200, 400, 800]} intensity={2.8} color="#e2e6fa" /><directionalLight position={[300, 150, 500]} intensity={1.6} color="#f0d7b3" />
+    <ambientLight intensity={1.5} />
+    <directionalLight position={[-200, 400, 800]} intensity={2.8} color="#e2e6fa" />
+    <directionalLight position={[300, 150, 500]} intensity={1.6} color="#f0d7b3" />
     <Cat {...props} />
   </Canvas>;
 }

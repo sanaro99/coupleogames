@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, PawPrint, Settings, Trophy, X } from 'lucide-react';
 import { GAMES } from '../shared/games';
 import type { CatMood, GameId } from '../shared/types';
@@ -22,6 +22,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [inviteUrl, setInviteUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  const identity = useRef(room?.roomId); identity.current = room?.roomId;
+  useEffect(() => { setModal(null); setNames(['', '']); setInviteUrl(''); setKey(''); setCopied(false); }, [room?.roomId, room?.seat]);
 
   useEffect(() => {
     const media = matchMedia('(prefers-reduced-motion: reduce)');
@@ -29,13 +31,14 @@ export default function App() {
     media.addEventListener('change', change);
     return () => media.removeEventListener('change', change);
   }, []);
-  useEffect(() => { if (room && !room.setup) setNames(room.names); }, [room?.setup, room?.seat]);
+  useEffect(() => { if (room && !room.setup) setNames(room.names); }, [room?.setup, room?.seat, room?.roomId]);
   const effects = !reduced && !osReduced;
   const rules = (game: GameId | null = room?.match?.game ?? room?.proposal?.game ?? null) => {
     setRuleGame(game); setModal('rules');
   };
   const invite = async () => {
-    try { const result = await api<{ url: string }>('invite'); setInviteUrl(result.url); setCopied(false); setModal('invite'); }
+    const roomId = identity.current;
+    try { const result = await api<{ url: string }>('invite'); if (identity.current !== roomId) return; setInviteUrl(result.url); setCopied(false); setModal('invite'); }
     catch (e) { setError((e as Error).message); }
   };
   const m = room?.match;
@@ -88,7 +91,7 @@ export default function App() {
       </div>}
       {modal === 'rules' && (ruleGame ? <div className="rules-content"><ol>{GAMES[ruleGame].rules.map(rule => <li key={rule}>{rule}</li>)}</ol><button className="primary" onClick={() => setModal(null)}>Got it</button></div>
         : <div className="help-games">{(Object.keys(GAMES) as GameId[]).map(game => <button className="secondary" key={game} onClick={() => setRuleGame(game)}>{GAMES[game].title}</button>)}</div>)}
-      {modal === 'invite' && <div className="invite-content"><p>Your partner can open this link and sign in with their private key.</p><label htmlFor="invite-url">Link</label><input id="invite-url" readOnly value={inviteUrl} onFocus={e => e.target.select()} /><button className="primary" onClick={async () => { try { await navigator.clipboard.writeText(inviteUrl); setCopied(true); } catch { setError('Select the link to copy it.'); } }}><Link size={16} />{copied ? 'Copied' : 'Copy link'}</button></div>}
+      {modal === 'invite' && <div className="invite-content"><p>Your partner needs their own private seat invitation from the room operator. This website address alone does not grant access.</p><label htmlFor="invite-url">Website address</label><input id="invite-url" readOnly value={inviteUrl} onFocus={e => e.target.select()} /><button className="primary" onClick={async () => { try { await navigator.clipboard.writeText(inviteUrl); setCopied(true); } catch { setError('Select the link to copy it.'); } }}><Link size={16} />{copied ? 'Copied' : 'Copy address'}</button></div>}
     </Modal>}
   </div>;
 }

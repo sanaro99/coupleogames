@@ -2,6 +2,10 @@
 
 CoupleOGames is for couples who want something to do together on their phones, especially when they're spending time apart. It gives you a small shared activity for the end of a day: draw something badly, guess what your partner would pick, or find out whether the same question sends you both to the same answer.
 
+Multiple couples can play at once on the same website. Each private room has exactly two seats, its own names, matches and scorecard, and separate invitations issued by the operator. There is no public lobby or room creation page.
+
+Public launch remains on hold. For local setup, room administration, preservation of existing single-room data and the deferred release process, see [the deployment guide](docs/deployment.md). The old site-wide key generator is retired; build first, then use `npm run rooms -- create --output ./data/private/local-couple.html` against an intended local database. Keep the generated file private and share each seat link only with its partner.
+
 ## Why make this for couples?
 
 Knowing the other person is part of the game. A clue can make sense because of a conversation you had yesterday. A preference you were sure about can turn out to be wrong. An awful drawing can still be obvious to the one person who knows what you meant. Those are the moments this table is built for.
