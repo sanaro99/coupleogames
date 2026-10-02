@@ -8,3 +8,7 @@ data
 .superpowers
 test-results
 playwright-report
+
+.local-deployment/
+output/
+.playwright-cli/

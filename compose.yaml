@@ -1,20 +1,18 @@
 services:
   coupleogames:
-    image: ${COUPLEOGAMES_IMAGE:?Set an approved immutable sha-tagged image}
+    image: ${COUPLEOGAMES_IMAGE:?Set an approved immutable image}
     build: .
     restart: unless-stopped
-    env_file: .env
+    env_file: ${COUPLEOGAMES_ENV_FILE:?Set a private environment file}
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
-      PORT: 3001
+      PORT: ${COUPLEOGAMES_CONTAINER_PORT:?Set the app port}
       DATABASE_PATH: /app/data/coupleogames.sqlite
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:${COUPLEOGAMES_BIND_PORT:?Set a loopback port}:${COUPLEOGAMES_CONTAINER_PORT:?Set the app port}"
     volumes:
       - game-data:/app/data
-    labels:
-      com.centurylinklabs.watchtower.enable: "false"
     security_opt:
       - no-new-privileges:true
     cap_drop:

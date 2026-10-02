@@ -14,5 +14,25 @@ describe('release remains held',()=>{
     expect(job.needs).toBe('verify');expect(job.environment).toBe('coupleogames-release');expect(w.on.workflow_dispatch.inputs.publish.default).toBe(false);expect(w.permissions.packages).toBeUndefined();expect(job.permissions.packages).toBe('write');
     const metadata=job.steps.find((s:any)=>s.uses?.startsWith('docker/metadata-action'));expect(metadata.with.flavor).toBe('latest=false');expect(metadata.with.tags.trim()).toBe('type=sha,format=long,prefix=sha-');
   });
-  it.each(['compose.yaml','deploy/compose.example.yaml'])('%s requires a pinned image and disables Watchtower updates',path=>{const service=parse(readFileSync(path,'utf8')).services.coupleogames;expect(service.image).toMatch(/^\$\{COUPLEOGAMES_IMAGE:\?/);expect(service.labels?.['com.centurylinklabs.watchtower.enable']).not.toBe('true');expect(service.ports.every((p:string)=>p.startsWith('127.0.0.1:'))).toBe(true);});
+  it.each(['compose.yaml','deploy/compose.example.yaml'])('%s requires a pinned image and omits automatic-update labels',path=>{const service=parse(readFileSync(path,'utf8')).services.coupleogames;expect(service.image).toMatch(/^\$\{COUPLEOGAMES_IMAGE:\?/);expect(service.labels).toBeUndefined();expect(service.ports.every((p:string)=>p.startsWith('127.0.0.1:'))).toBe(true);});
+});
+
+// Public templates require local settings instead of carrying a deployment map.
+describe('portable container configuration',()=>{
+  it.each(['compose.yaml','deploy/compose.example.yaml'])('%s requires explicit ports and private environment configuration',path=>{
+    const service=parse(readFileSync(path,'utf8')).services.coupleogames;
+    expect(service.environment.PORT).toMatch(/^\$\{COUPLEOGAMES_CONTAINER_PORT:\?/);
+    expect(service.ports).toEqual(['127.0.0.1:${COUPLEOGAMES_BIND_PORT:?Set a loopback port}:${COUPLEOGAMES_CONTAINER_PORT:?Set the app port}']);
+    expect([service.env_file].flat()).toEqual(['${COUPLEOGAMES_ENV_FILE:?Set a private environment file}']);
+    expect(service.labels).toBeUndefined();
+  });
+  it('the bind-mount example takes storage and runtime identity from private configuration',()=>{
+    const service=parse(readFileSync('deploy/compose.example.yaml','utf8')).services.coupleogames;
+    expect(service.user).toBe('${COUPLEOGAMES_UID:?Set a non-root user ID}:${COUPLEOGAMES_GID:?Set a group ID}');
+    expect(service.volumes).toEqual(['${COUPLEOGAMES_DATA_DIR:?Set a local data directory}:/app/data']);
+  });
+  it('the image health check follows the configured application port',()=>{
+    const dockerfile=readFileSync('Dockerfile','utf8');
+    expect(dockerfile.split('\n').find(line=>line.startsWith('HEALTHCHECK'))).toContain('process.env.PORT');
+  });
 });

@@ -11,3 +11,7 @@ test-results/
 .superpowers/
 *.log
 .DS_Store
+
+.local-deployment/
+output/
+.playwright-cli/
