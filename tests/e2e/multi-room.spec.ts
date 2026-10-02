@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { phone,nameRoom,start } from './room-support';
-test('two_couples_play_and_save_independent_results',async({browser})=>{
+test('two_pairs_play_and_save_independent_results',async({browser})=>{
   const a=await phone(browser,1,0);const ap=await phone(browser,1,1);const b=await phone(browser,2,0);const bp=await phone(browser,2,1);await nameRoom(a.page,ap.page,['Room Ada','Room Bea']);await nameRoom(b.page,bp.page,['Room Cal','Room Dee']);
   await start(a.page,ap.page,'In Sync');await start(b.page,bp.page,'Know Me Better');
   for(let round=0;round<6;round++) {
