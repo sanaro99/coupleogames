@@ -72,14 +72,18 @@ export function Host({ mood, effects, active, arrivalKey, instruction, inGame, h
     lastInteraction.current = '';
     const frame = requestAnimationFrame(() => moveTo(destination, mood === 'celebrate'));
     setBubble(inGame && mood === 'explain' ? instruction : '');
-    if (bubbleTimer.current) clearTimeout(bubbleTimer.current);
-    bubbleTimer.current = setTimeout(() => setBubble(''), 4400);
     const stroll = !inGame && animated ? [
       setTimeout(() => moveTo('sync'), 10000),
       setTimeout(() => moveTo('clue', true), 21000),
     ] : [];
     return () => { cancelAnimationFrame(frame); stroll.forEach(clearTimeout); };
   }, [arrivalKey, active, inGame, mood, instruction, animated, moveTo]);
+  useEffect(() => {
+    // Give instructions their full reading time after the slower walk finishes.
+    if (!bubble || moving || !active || !visible || !speechSafe) return;
+    bubbleTimer.current = setTimeout(() => setBubble(''), 4400);
+    return () => { if (bubbleTimer.current) clearTimeout(bubbleTimer.current); };
+  }, [bubble, moving, active, visible, speechSafe, arrivalKey]);
   useEffect(() => {
     if (!active) return;
     let frame = 0;

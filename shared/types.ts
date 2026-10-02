@@ -28,6 +28,7 @@ export interface RecordEntry {
 }
 export interface Proposal { id: string; game: GameId; ready: [boolean, boolean] }
 export interface RoomState {
+  roomId: string; revision: number;
   seat: Seat; names: [string, string]; setup: boolean; online: [boolean, boolean];
   proposal: Proposal | null; match: GameView | null; records: RecordEntry[];
   leaveVotes: [boolean, boolean]; serverTime: number;

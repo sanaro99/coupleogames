@@ -1,7 +1,8 @@
 services:
   coupleogames:
-    image: ghcr.io/sanaro99/coupleogames:latest
+    image: ${COUPLEOGAMES_IMAGE:?Set an approved immutable sha-tagged image}
     restart: unless-stopped
+    user: "568:568"
     env_file:
       - /mnt/apps-pool/appconfig/coupleogames.env
     environment:
@@ -10,11 +11,11 @@ services:
       PORT: "3001"
       DATABASE_PATH: /app/data/coupleogames.sqlite
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:18081:3001"
     volumes:
-      - /mnt/apps-pool/coupleogames/data:/app/data
+      - /mnt/apps-pool/coupleogames:/app/data
     labels:
-      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.enable: "false"
     security_opt:
       - no-new-privileges:true
     cap_drop:
