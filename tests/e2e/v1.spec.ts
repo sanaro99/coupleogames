@@ -147,7 +147,7 @@ test('a private two-phone table completes all four games and keeps the scorecard
   await ca.close(); await cb.close();
 });
 test('the entry is private and reduced effects preserve the experience', async ({ page }) => {
-  await page.goto('/'); await expect(page.getByRole('heading', { name: 'Join your partner' })).toBeVisible();
+  await page.goto('/'); await expect(page.getByRole('button', { name: 'Start a game', exact: true })).toBeVisible();
   await enter(page, 0); await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByLabel('Animate the cat').uncheck(); await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.cat-static')).toBeVisible();

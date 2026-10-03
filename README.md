@@ -2,9 +2,9 @@
 
 CoupleOGames brings two people together for short games on their phones. Play with a friend or partner, whether you're nearby or spending time apart: draw something badly, guess what the other person would pick, or find out whether the same question sends you both to the same answer.
 
-Multiple pairs of players can play at once on the same website. Each invitation-only game session has two player positions and its own names, matches and scorecard. The operator issues a separate invitation for each player; there is no public lobby or session creation page.
+Multiple pairs of players can play at once on the same website. Choose **Start a game** to create a private room, enter your names, and copy the partner invitation link or code. Your partner uses **Join a game** or opens that link. Each room has two player positions and its own names, matches and scorecard. Save your own return link to revisit your seat and recover the partner invitation.
 
-Public launch remains on hold. For local setup, room administration, preservation of existing single-room data and the deferred release process, see [the deployment guide](docs/deployment.md). The old site-wide key generator is retired; build first, then use `npm run rooms -- create --output ./data/private/local-session.html` against an intended local database. Keep the generated file private and share each seat link only with its partner.
+For local setup, room administration, preservation of existing single-room data and the protected release process, see [the deployment guide](docs/deployment.md). The operator CLI can also issue invitations or revoke access. Share seat links privately: anyone with a link can use its seat.
 
 ## Why play together?
 
