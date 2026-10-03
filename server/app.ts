@@ -6,10 +6,11 @@ import { Server } from 'socket.io';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isIP } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
 import { Store } from './store.js';
-import { AccessService, sameAccess, SESSION_MS } from './access.js';
+import { AccessService, hashToken, invitationsFromSession, newToken, sameAccess, SESSION_MS } from './access.js';
 import { AccessError, CapacityError, RevisionConflict, type AccessContext, type RoomRepository } from './repository.js';
 import { RoomManager, RoomCommandError, type RoomCommand } from './rooms.js';
 import { defaultLimits, positiveInteger, WindowLimiter } from './limits.js';
@@ -51,6 +52,7 @@ export async function createApp(config: AppConfig, dependencies: { repository?: 
   await http.register(cookie);
   await http.register(helmet,{contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],imgSrc:["'self'",'data:','blob:'],connectSrc:["'self'",config.production?'wss:':'ws:'],fontSrc:["'self'"],objectSrc:["'none'"],frameAncestors:["'none'"],upgradeInsecureRequests:config.production?[]:null}}});
   const httpLimit=new WindowLimiter(120,60000);const loginLimit=new WindowLimiter(10,60000);const handshakeLimit=new WindowLimiter(30,60000);const actionLimit=new WindowLimiter(180,10000);
+  const creationLimit=new WindowLimiter(5,3600000);const globalCreationLimit=new WindowLimiter(30,3600000);
   const io=new Server(http.server,{maxHttpBufferSize:16384,cors:{origin,credentials:true},allowRequest:(req,done)=>done(null,req.headers.origin===origin && handshakeLimit.consume(clientIp(req,trusted),now()))});
   const sessionSockets=new Map<string,Set<string>>();
   const roomChannel=(id:string,seat:number)=>`room:${id}:seat:${seat}`;
@@ -76,6 +78,19 @@ export async function createApp(config: AppConfig, dependencies: { repository?: 
   const accessFor=async(token:string|undefined)=>{const access=await auth.resolve(token,now());if(!access) throw new AccessError();return access;};
   const disconnectSession=(hash:string)=>{for(const id of [...(sessionSockets.get(hash)??[])])io.sockets.sockets.get(id)?.disconnect(true);};
   http.get('/api/health',async()=>({ok:true}));
+  http.post('/api/rooms',async(request,reply)=>{
+    z.object({}).strict().parse(request.body);
+    if(await auth.resolve(request.cookies.couple_session,now())) throw new RoomCommandError('You already have a game open. Sign out before starting another.');
+    if(!creationLimit.consume(request.ip,now()) || !globalCreationLimit.consume('all',now())) throw new CapacityError('Too many games started. Please try again in an hour.');
+    const partnerKey=newToken();const creatorKey=`cog1.${newToken()}.${partnerKey}`;const roomId=randomUUID();
+    await store.createRoom({roomId,invitationHashes:[hashToken(creatorKey),hashToken(partnerKey)],maxRooms:limits.maxRooms,now:now()});
+    try {
+      const result=await auth.login(creatorKey,request.cookies.couple_session,now());
+      const room=await rooms.state(result.access,now());
+      reply.setCookie('couple_session',result.token,{path:'/',httpOnly:true,sameSite:'strict',secure:config.production,maxAge:SESSION_MS/1000});
+      return reply.code(201).send({room,invitations:{creatorKey,partnerKey}});
+    } catch(error) { await store.disableRoom(roomId,now());throw error; }
+  });
   http.post('/api/login',async(request,reply)=>{
     const {key}=z.object({key:z.string().min(1).max(200)}).strict().parse(request.body);
     const previous=request.cookies.couple_session;const previousAccess=await auth.resolve(previous,now());const result=await auth.login(key,previous,now());
@@ -86,6 +101,10 @@ export async function createApp(config: AppConfig, dependencies: { repository?: 
   http.register(async api=>{
     api.addHook('preHandler',async request=>{await accessFor(request.cookies.couple_session);});
     api.get('/api/session',async request=>rooms.state(await accessFor(request.cookies.couple_session),now()));
+    api.get('/api/invitations',async request=>{
+      const token=request.cookies.couple_session;const access=await accessFor(token);
+      return {invitations:access.seat===0?invitationsFromSession(token!):null};
+    });
     api.get('/api/invite',async()=>({url:`${origin}/`}));
     api.post('/api/setup',async request=>{await rooms.execute(await accessFor(request.cookies.couple_session),{type:'setup',...namesSchema.parse(request.body)},now());return {ok:true};});
     api.post('/api/logout',async(request,reply)=>{const access=await accessFor(request.cookies.couple_session);await auth.logout(request.cookies.couple_session);disconnectSession(access.sessionHash);reply.clearCookie('couple_session',{path:'/'});return {ok:true};});

@@ -1,8 +1,8 @@
-# Two-player sessions and deferred deployment
+# Two-player sessions and deployment
 
-**Public launch is on hold.** These instructions describe future operator work. This change does not deploy, publish an image, change infrastructure, create production invitations, or expose routes. One app process owns one SQLite database on local storage.
+Visitors can create private two-seat rooms from the website. One app process owns one SQLite database on local storage. Image publication and installation remain explicit operator actions through the protected release process; source changes do not update live infrastructure.
 
-## Verification and release hold
+## Verification and protected releases
 
 `.github/workflows/coupleogames.yml` verifies pull requests and main pushes with Node 24, unit/server tests, production builds, Chromium acceptance tests and a local Docker build. Those events cannot publish. Publishing requires all of:
 
@@ -47,7 +47,9 @@ The command prints a room ID and output path, never credentials. Open that priva
 
 ## Operator access and invitation lifecycle
 
-There is no public room-creation, room listing, invitation retrieval, or administrative HTTP endpoint. The operator must have filesystem access to the database. Each room always has two seats, numbered `0` and `1` in CLI arguments. Their invitations contain independently random 256-bit bearer secrets; SQLite stores only SHA-256 hashes. Anyone who obtains a seat link can use that seat, so share privately.
+The public `POST /api/rooms` endpoint creates a room and signs the creator into seat `0`. Its no-store response supplies separate creator and partner credentials; the partner uses seat `1`. Creation requires the configured same origin, an empty JSON body, available capacity, and no existing authenticated room. No room listing or administrative HTTP endpoint is exposed. The operator must have filesystem access to the database for rotation and disabling rooms.
+
+The creator credential contains its own independently random 256-bit secret and the partner's independently random 256-bit secret. SQLite stores only hashes of the full creator credential and the partner credential. Knowing the partner credential cannot grant the creator seat. Creator sessions include the creator credential inside their random HttpOnly session cookie, with only a hash of that entire cookie stored in SQLite. The authenticated, creator-only `GET /api/invitations` endpoint recovers both invitations from that cookie; partner and legacy operator sessions receive no invitations. Forged cookies must first pass full-token authentication. No plaintext credentials are persisted in the database or browser storage accessible to JavaScript. Copy the return link for use after session expiry or sign-out. Invitation tokens use URL fragments, which are removed when consumed. Operator rotations invalidate the affected old invitation, so distribute the replacement privately. Anyone who obtains a seat link can use that seat.
 
 ```sh
 npm run rooms -- list
@@ -60,11 +62,11 @@ Output is created exclusively, never overwritten. Parent directories are request
 
 Opening `/#invite=...` scrubs the fragment promptly, exchanges it for a new opaque HttpOnly, SameSite=Strict cookie and replaces only that browser's previous session. Production cookies require HTTPS. Sessions expire after 30 days. Signing out revokes that device session; rotation revokes all sessions for only the chosen seat, including existing sockets. Disable revokes both seats and preserves names, games and history; there is currently no re-enable command. A seat at its device limit must sign out elsewhere or ask the operator for rotation.
 
-The player-facing share button returns the ordinary website address. It cannot retrieve either private invitation. Both partners can configure names once within their own room. Names, readiness, online state, actions, scorecards and socket projections use the authenticated room and fixed seat; request parameters cannot choose a different room or seat.
+The creator can copy the partner invitation and their own return link during setup or from Settings. Players cannot rotate credentials; existing operator-issued rooms retain their separate invitations. Creator access includes persistent credentials for both seats: sign-out revokes the device session, not copied invitations. If a creator link or session is compromised, rotate both seats or disable the room. Both partners can configure names once within their own room. Names, readiness, online state, actions, scorecards and socket projections use the authenticated room and fixed seat; request parameters cannot choose a different room or seat. Invitation responses use `Cache-Control: no-store`.
 
 ## Abuse controls and proxies
 
-Operator-only provisioning prevents anonymous room spam. Active-room creation and device/session limits run inside SQLite transactions. Bounded in-memory limiters enforce 120 API requests per minute per IP, 10 login attempts per minute per IP, 30 new Socket.IO handshakes per minute per IP and 180 events per 10 seconds per session across tabs. Invalid game events also consume that budget. Bodies and socket messages are capped at 16 KiB; drawing coordinates, counts and payloads are validated.
+Anonymous creation is limited to five attempts per hour per trusted client IP and thirty attempts per hour across the app. The active room cap defaults to 100; the operator can disable unused rooms to release capacity while retaining their data. Active-room creation and device/session limits run inside SQLite transactions. If creator sign-in fails after creation, the new room is disabled to release capacity. Bounded in-memory limiters also enforce 120 API requests per minute per IP, 10 login attempts per minute per IP, 30 new Socket.IO handshakes per minute per IP and 180 events per 10 seconds per session across tabs. Invalid game events also consume that budget. Bodies and socket messages are capped at 16 KiB; drawing coordinates, counts and payloads are validated.
 
 Mutation requests require the configured Origin and reject cross-site browser metadata; new sockets require the configured Origin and a valid cookie. Established sockets are checked before each action and every recipient emission, with a periodic revocation/expiry sweep. CORS is not an authorization boundary.
 

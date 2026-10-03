@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import type { GameAction, RoomState } from '../../shared/types';
+import { creatorInvitations, invitationKey, type CreatedRoom, type SeatInvitations } from '../../shared/invitations';
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/${path}`, { method: body === undefined ? 'GET' : 'POST', headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' });
   const result = await response.json(); if (!response.ok) throw new Error(result.error ?? 'Please try again.'); return result as T;
@@ -9,7 +10,12 @@ function takeInvite(): string | null {
   const invite=new URLSearchParams(location.hash.slice(1)).get('invite');
   if(invite)history.replaceState(null,'',location.pathname+location.search);return invite;
 }
+function rememberInvitations(room: RoomState, key: string): (SeatInvitations & {roomId:string}) | null {
+  const invitations=room.seat===0?creatorInvitations(key):null;
+  return invitations?{...invitations,roomId:room.roomId}:null;
+}
 export function useRoom() {
+  const [savedInvitations,setSavedInvitations]=useState<(SeatInvitations & {roomId:string})|null>(null);
   const [room,setRoom]=useState<RoomState|null>(null);const [loading,setLoading]=useState(true);const [connected,setConnected]=useState(false);const [error,setError]=useState('');
   const [generation,setGeneration]=useState(0);const authVersion=useRef(0);const socket=useRef<Socket|null>(null);const roomRef=useRef(room);roomRef.current=room;
   const boot=useRef<Promise<RoomState|null>|null>(null);const authChain=useRef<Promise<unknown>>(Promise.resolve());const channel=useRef<BroadcastChannel|null>(null);
@@ -24,9 +30,21 @@ export function useRoom() {
     });authChain.current=task;await task;
   },[begin]);
   const login=useCallback(async(key:string)=>{
+    const credential=invitationKey(key);
     const version=begin();const task=authChain.current.catch(()=>{}).then(async()=>{
-      try{const value=await api<RoomState>('login',{key:key.trim()});channel.current?.postMessage({type:'access-changed'});if(authVersion.current===version){setRoom(value);setError('');}}
+      try{const value=await api<RoomState>('login',{key:credential});const invitations=rememberInvitations(value,credential);channel.current?.postMessage({type:'access-changed'});if(authVersion.current===version){setSavedInvitations(invitations);setRoom(value);setError('');}}
       catch(e){let previous:RoomState|null=null;try{previous=await api<RoomState>('session');}catch{}if(authVersion.current===version){setRoom(previous);setError((e as Error).message);}}
+      finally{if(authVersion.current===version)setLoading(false);}
+    });authChain.current=task;await task;
+  },[begin]);
+  const create=useCallback(async()=>{
+    const version=begin();const task=authChain.current.catch(()=>{}).then(async()=>{
+      try {
+        const value=await api<CreatedRoom>('rooms',{});
+        const invitations=rememberInvitations(value.room,value.invitations.creatorKey);
+        channel.current?.postMessage({type:'access-changed'});
+        if(authVersion.current===version){setSavedInvitations(invitations);setRoom(value.room);setError('');}
+      } catch(e) {let previous:RoomState|null=null;try{previous=await api<RoomState>('session');}catch{}if(authVersion.current===version){setRoom(previous);setError((e as Error).message);}}
       finally{if(authVersion.current===version)setLoading(false);}
     });authChain.current=task;await task;
   },[begin]);
@@ -36,7 +54,7 @@ export function useRoom() {
       const invite=takeInvite();
       boot.current=authChain.current.then(async()=>{
         if(!invite)return api<RoomState>('session');
-        try{const value=await api<RoomState>('login',{key:invite});channel.current?.postMessage({type:'access-changed'});return value;}
+        try{const value=await api<RoomState>('login',{key:invite});const invitations=rememberInvitations(value,invite);if(authVersion.current===version)setSavedInvitations(invitations);channel.current?.postMessage({type:'access-changed'});return value;}
         catch(e){
           if(authVersion.current===version)setError((e as Error).message);
           try{return await api<RoomState>('session');}catch{return null;}
@@ -55,6 +73,14 @@ export function useRoom() {
   },[refresh]);
   const roomId=room?.roomId;const seat=room?.seat;
   useEffect(()=>{
+    if(!roomId || seat!==0){setSavedInvitations(null);return;}
+    let cancelled=false;const version=authVersion.current;
+    void api<{invitations:SeatInvitations|null}>('invitations').then(result=>{
+      if(!cancelled && authVersion.current===version)setSavedInvitations(result.invitations?{...result.invitations,roomId}:null);
+    }).catch(()=>{});
+    return()=>{cancelled=true;};
+  },[roomId,seat,generation]);
+  useEffect(()=>{
     if(!roomId || seat===undefined)return;
     const version=authVersion.current;const s=io({autoConnect:true,withCredentials:true,transports:['websocket','polling']});socket.current=s;
     const current=()=>authVersion.current===version && socket.current===s;
@@ -70,8 +96,9 @@ export function useRoom() {
   },[]);
   const act=useCallback((value:Pick<GameAction,'type'> & Partial<GameAction>)=>{const m=roomRef.current?.match;if(!m)return Promise.resolve(false);return send('action',{...value,id:globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,matchId:m.id,round:m.round,phase:m.phase});},[send]);
   const logout=useCallback(async()=>{
-    const version=begin();const task=authChain.current.catch(()=>{}).then(async()=>{try{await api('logout',{});channel.current?.postMessage({type:'access-changed'});}catch(e){if(authVersion.current===version)setError((e as Error).message);}finally{if(authVersion.current===version)setLoading(false);}});authChain.current=task;await task;
+    const version=begin();const task=authChain.current.catch(()=>{}).then(async()=>{try{await api('logout',{});setSavedInvitations(null);channel.current?.postMessage({type:'access-changed'});}catch(e){if(authVersion.current===version)setError((e as Error).message);}finally{if(authVersion.current===version)setLoading(false);}});authChain.current=task;await task;
   },[begin]);
-  return {room,loading,connected,error,setError,send,act,login,logout};
+  const invitations=room?.seat===0 && savedInvitations?.roomId===roomId?savedInvitations:null;
+  return {room,loading,connected,error,setError,send,act,login,logout,create,invitations};
 }
 export type Act=ReturnType<typeof useRoom>['act'];
